@@ -9,26 +9,35 @@
     }
   },
   "rules": [
-    { "type": "pull_request",
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "type": "pull_request",
       "parameters": {
         "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": true,
         "require_code_owner_review": false,
         "require_last_push_approval": false,
-        "allowed_merge_methods": ["squash"],
-        "require_a_to_merge": true,
-        "required_linear_history": true
+        "required_review_thread_resolution": false
       }
     },
-    { "type": "non_fast_forward" },
-    { "type": "required_status_checks",
+    {
+      "type": "required_status_checks",
       "parameters": {
         "required_status_checks": [
-          { "context": "Lint & Format" },
-          { "context": "Test" }
-        ]
+          {"context": "Lint & Format"},
+          {"context": "Test"}
+        ],
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false
       }
-    },
-    { "type": "required_linear_history" }
+    }
   ]
 }
