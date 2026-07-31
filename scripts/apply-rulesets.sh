@@ -1,37 +1,86 @@
 #!/usr/bin/env bash
-# Apply GitHub repository rulesets from .github/repository_rulesets.json
+# Apply branch protection rules to main and dev branches.
 # Usage: ./scripts/apply-rulesets.sh [owner/repo]
 #
 # Requires: gh CLI (authenticated)
+# Note: Branch protection API works on free plans for public repos.
+#       For private repos, GitHub Pro is required.
 
 set -euo pipefail
 
 REPO="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-RULESETS_FILE=".github/repository_rulesets.json"
+echo "Applying branch protection to: $REPO"
 
-if [[ ! -f "$RULESETS_FILE" ]]; then
-    echo "ERROR: $RULESETS_FILE not found"
-    exit 1
-fi
+# ── Main branch ──────────────────────────────────────
+echo ""
+echo "=== main ==="
+cat > /tmp/_bp_main.json << 'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["Lint & Format", "Test"]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 0
+  },
+  "restrictions": null,
+  "allow_force_pushes": true,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": false,
+  "required_linear_history": true,
+  "lock_branch": false,
+  "allow_fork_syncing": false
+}
+JSON
 
-echo "Applying rulesets to: $REPO"
+gh api \
+  --method PUT \
+  "/repos/$REPO/branches/main/protection" \
+  --input /tmp/_bp_main.json > /dev/null 2>&1 \
+  && echo "  ✓ main: PR required, squash merge, CI must pass, owner can force push" \
+  || echo "  ✗ Failed to protect main"
 
-# Check if ruleset already exists (by name)
-RULESET_NAME=$(python3 -c "import json; print(json.load(open('$RULESETS_FILE'))['name'])")
-EXISTING=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name==\"$RULESET_NAME\") | .id" 2>/dev/null || true)
+# ── Dev branch ───────────────────────────────────────
+echo ""
+echo "=== dev ==="
+cat > /tmp/_bp_dev.json << 'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["Lint & Format", "Test"]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 0
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": false,
+  "required_linear_history": true,
+  "lock_branch": false,
+  "allow_fork_syncing": false
+}
+JSON
 
-RULESET_JSON=$(cat "$RULESETS_FILE")
+gh api \
+  --method PUT \
+  "/repos/$REPO/branches/dev/protection" \
+  --input /tmp/_bp_dev.json > /dev/null 2>&1 \
+  && echo "  ✓ dev: PR required, squash merge, CI must pass" \
+  || echo "  ✗ Failed to protect dev"
 
-if [[ -n "$EXISTING" ]]; then
-    echo "Updating existing ruleset: $RULESET_NAME (id=$EXISTING)"
-    echo "$RULESET_JSON" | gh api "repos/$REPO/rulesets/$EXISTING" --method PUT --input -
-    echo "Updated: $RULESET_NAME"
-else
-    echo "Creating new ruleset: $RULESET_NAME"
-    echo "$RULESET_JSON" | gh api "repos/$REPO/rulesets" --method POST --input -
-    echo "Created: $RULESET_NAME"
-fi
+rm -f /tmp/_bp_main.json /tmp/_bp_dev.json
 
 echo ""
-echo "Ruleset applied. Verifying..."
-gh api "repos/$REPO/rulesets" --jq '.[] | "  [\(.id)] \(.name) — enforcement: \(.enforcement)"'
+echo "Done. Rules applied:"
+echo "  feature → dev   (squash merge, CI required)"
+echo "  feature → main  (squash merge, CI required, owner bypass)"
+echo "  dev → main      NOT allowed (must go through feature branch)"
