@@ -2,49 +2,195 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint & Format
+  detect:
+    name: Detect project type
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+      node: ${{ steps.detect.outputs.node }}
+      go: ${{ steps.detect.outputs.go }}
+      rust: ${{ steps.detect.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect
+        id: detect
+        run: |
+          echo "python=$([[ -f pyproject.toml || -f requirements.txt || -f setup.py || -f setup.cfg ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "node=$([[ -f package.json ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "go=$([[ -f go.mod ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "rust=$([[ -f Cargo.toml ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  # ── Python ──────────────────────────────────────────
+  python-lint:
+    name: "Python: Lint & Format"
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
-
       - name: Set up Python
         run: uv python install 3.13
-
       - name: Install dependencies
         run: uv sync --all-extras
-
       - name: Ruff check (lint)
         run: uv run ruff check .
-
       - name: Ruff format check
         run: uv run ruff format --check .
 
-  test:
-    name: Test
+  python-test:
+    name: "Python: Test"
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
-
       - name: Set up Python
         run: uv python install 3.13
-
       - name: Install dependencies
         run: uv sync --all-extras
-
       - name: Run tests
         run: uv run pytest
+
+  # ── Node.js ─────────────────────────────────────────
+  node-lint:
+    name: "Node: Lint & Format"
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: ESLint
+        run: npx eslint .
+      - name: Prettier check
+        run: npx prettier --check .
+
+  node-test:
+    name: "Node: Test"
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run tests
+        run: npm test
+
+  # ── Go ──────────────────────────────────────────────
+  go-lint:
+    name: "Go: Lint & Format"
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+      - name: Format check
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then echo "Unformatted files:"; echo "$diff"; exit 1; fi
+
+  go-test:
+    name: "Go: Test"
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Run tests
+        run: go test ./...
+
+  # ── Rust ────────────────────────────────────────────
+  rust-lint:
+    name: "Rust: Lint & Format"
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+      - name: Format check
+        run: cargo fmt -- --check
+
+  rust-test:
+    name: "Rust: Test"
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test
+
+  # ── Gate: must pass before merge ────────────────────
+  ci-gate:
+    name: "CI Gate"
+    needs: [detect, python-lint, python-test, node-lint, node-test, go-lint, go-test, rust-lint, rust-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          results=("${{ needs.python-lint.result }}" "${{ needs.python-test.result }}" \
+                   "${{ needs.node-lint.result }}" "${{ needs.node-test.result }}" \
+                   "${{ needs.go-lint.result }}" "${{ needs.go-test.result }}" \
+                   "${{ needs.rust-lint.result }}" "${{ needs.rust-test.result }}")
+          detect_python="${{ needs.detect.outputs.python }}"
+          detect_node="${{ needs.detect.outputs.node }}"
+          detect_go="${{ needs.detect.outputs.go }}"
+          detect_rust="${{ needs.detect.outputs.rust }}"
+
+          # Collect only jobs that should have run
+          needed=()
+          [[ "$detect_python" == "true" ]] && needed+=("${results[0]}" "${results[1]}")
+          [[ "$detect_node" == "true" ]]   && needed+=("${results[2]}" "${results[3]}")
+          [[ "$detect_go" == "true" ]]     && needed+=("${results[4]}" "${results[5]}")
+          [[ "$detect_rust" == "true" ]]   && needed+=("${results[6]}" "${results[7]}")
+
+          # If no project type detected, fail
+          if [ ${#needed[@]} -eq 0 ]; then
+            echo "ERROR: No recognized project type found (need pyproject.toml, package.json, go.mod, or Cargo.toml)"
+            exit 1
+          fi
+
+          # Check all needed jobs passed
+          for r in "${needed[@]}"; do
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+              echo "CI failed: $r"
+              exit 1
+            fi
+          done
+
+          echo "All checks passed"
