@@ -1,0 +1,6 @@
+# Default: filip2mac owns everything
+* @filip2mac
+
+# CI/CD changes need review
+.github/ @filip2mac
+scripts/ @filip2mac

@@ -1,0 +1,34 @@
+{
+  "name": "main-protection",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    { "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "allowed_merge_methods": ["squash"],
+        "require_a_to_merge": true,
+        "required_linear_history": true
+      }
+    },
+    { "type": "non_fast_forward" },
+    { "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          { "context": "Lint & Format" },
+          { "context": "Test" }
+        ]
+      }
+    },
+    { "type": "required_linear_history" }
+  ]
+}
